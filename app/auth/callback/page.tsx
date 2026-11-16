@@ -1,11 +1,11 @@
 "use client";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
-export default function AuthCallback() {
+function AuthCallbackInner() {
   const router = useRouter();
   const search = useSearchParams();
   useEffect(() => {
@@ -33,4 +33,12 @@ export default function AuthCallback() {
     run();
   }, [router, search]);
   return <div style={{ padding: 60, textAlign: "center" }}>Signing you in with Google...</div>;
+}
+
+export default function AuthCallback() {
+  return (
+    <Suspense fallback={<div style={{ padding: 60, textAlign: "center" }}>Signing you in with Google...</div>}>
+      <AuthCallbackInner />
+    </Suspense>
+  );
 }
