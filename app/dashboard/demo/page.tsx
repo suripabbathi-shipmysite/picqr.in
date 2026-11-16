@@ -16,6 +16,7 @@ const steps = [
 const s = steps[step-1];
 
 return (<div style={{padding:24,background:'#F6F4FF',minHeight:'100vh',fontFamily:'Arial'}}>
+<a href="/" style={{textDecoration:"none",color:"#666",fontWeight:600}}>← Home</a>
 <a href="/dashboard" style={{textDecoration:'none',color:'#5B00B8',fontWeight:800}}>← Back to Dashboard</a>
 
 <div style={{maxWidth:760,margin:'16px auto',background:'#fff',padding:26,borderRadius:22,border:'1px solid #EDEBFF'}}>
