@@ -1,6 +1,35 @@
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
 export default function Home(){
-const input = {width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid #EDEBFF',background:'#fff',fontSize:13,outline:'none',boxSizing:'border-box' as const};
-const label = {fontSize:11,fontWeight:700,color:'#333',display:'block' as const,marginBottom:4};
+const router = useRouter();
+const [checking, setChecking] = useState(true);
+
+// LOGIN AYINA USER - DIRECT DASHBOARD
+useEffect(() => {
+  const check = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      router.replace("/dashboard");
+      return;
+    }
+    setChecking(false);
+  };
+  check();
+}, [router]);
+
+// Login check avutunnappudu landing chupinchakudadu - blank loading
+if (checking) {
+  return <div style={{padding:60,textAlign:'center',fontFamily:'Arial'}}>Loading...</div>;
+}
+
 const card = {background:'#fff',padding:16,borderRadius:16,border:'1px solid #EDEBFF',flex:1,textAlign:'center' as const};
 const section = {maxWidth:1100,margin:'0 auto',padding:'28px 4%'};
 return (
@@ -9,15 +38,17 @@ return (
 {/* HERO */}
 <div style={{...section,display:'flex',gap:28,flexWrap:'wrap'}}>
 <div style={{flex:'1 1 360px'}}>
-<h1 style={{fontSize:38,lineHeight:1.1,margin:'10px 0'}}>First Event <span style={{color:'#FF7A2F'}}>FREE</span> -<br/>12 Hours Only</h1>
-<p style={{fontSize:13,color:'#555',lineHeight:1.6}}>Instant photo delivery for weddings via QR code. Guests upload and download instantly - no app needed.</p>
-<form action="/signup" method="get" style={{background:'#fff',border:'1px solid #F0E8FF',borderRadius:16,padding:16,boxShadow:'0 12px 30px rgba(91,0,184,0.08)'}}>
-<div style={{marginBottom:10}}><label style={label}>Full Name</label><input style={input} placeholder="Enter your full name" name="name" /></div>
-<div style={{marginBottom:10}}><label style={label}>Country</label><select style={input} name="country" defaultValue=""><option value="" disabled>Select your country</option><option>India</option><option>USA</option><option>UK</option><option>UAE</option><option>Canada</option><option>Australia</option><option>Other</option></select></div>
-<div style={{marginBottom:12}}><label style={label}>Email ID</label><input style={input} placeholder="you@example.com" name="email" type="email" /></div>
-<button type="submit" style={{width:'100%',background:'linear-gradient(90deg,#5B00B8,#FF7A2F)',color:'#fff',border:'none',padding:'12px',borderRadius:10,fontWeight:800,cursor:'pointer'}}>Create Free Event</button>
-<p style={{fontSize:11,color:'#888',textAlign:'center',margin:'8px 0 0'}}>No credit card required - Free for 12 hours</p>
-</form>
+<h1 style={{fontSize:58,lineHeight:1.05,margin:'10px 0',fontWeight:900,letterSpacing:-1}}>First Event <span style={{color:'#FF7A2F'}}>FREE</span> -<br/>12 Hours Only</h1>
+<p style={{fontSize:15,color:'#555',lineHeight:1.6}}>Instant photo delivery for weddings via QR code. Guests upload and download instantly - no app needed.</p>
+
+<div style={{background:'#fff',border:'1px solid #F0E8FF',borderRadius:16,padding:20,boxShadow:'0 12px 30px rgba(91,0,184,0.08)',marginTop:16}}>
+<a href="/signup" style={{display:'block',width:'100%',boxSizing:'border-box' as const,textAlign:'center',background:'linear-gradient(90deg,#5B00B8,#FF7A2F)',color:'#fff',border:'none',padding:'20px 16px',borderRadius:14,fontWeight:900,fontSize:20,cursor:'pointer',textDecoration:'none'}}>Create Free Event →</a>
+<p style={{fontSize:12,color:'#888',textAlign:'center',margin:'12px 0 0'}}>No credit card required - Free for 12 hours</p>
+</div>
+
+<div style={{display:'flex',gap:14,marginTop:16,fontSize:12,fontWeight:700,color:'#333',flexWrap:'wrap' as const}}>
+<span>✓ No App Needed</span><span>✓ Original Quality</span><span>✓ Permanent QR</span>
+</div>
 </div>
 <div style={{flex:'1 1 420px'}}>
 <div style={{display:'flex',height:200}}>
@@ -38,7 +69,7 @@ return (
 </div>
 </div>
 
-{/* FEATURES - FULL PAGE FILL */}
+{/* FEATURES */}
 <div id="features" style={{...section,background:'#fff',borderRadius:20,border:'1px solid #F0E8FF',scrollMarginTop:90}}>
 <h2 style={{textAlign:'center',fontSize:24,margin:'0 0 6px'}}>Why Photographers Love PicQR</h2>
 <p style={{textAlign:'center',fontSize:13,color:'#666',margin:'0 0 18px'}}>No app. No waiting. No WhatsApp compression.</p>
@@ -49,7 +80,7 @@ return (
 </div>
 </div>
 
-{/* PRICING TEASER - PRICE NUMBERS IKKADA LEVU - SERVER NUNDE VASTHAYI */}
+{/* PRICING TEASER */}
 <div id="pricing" style={{...section,textAlign:'center',scrollMarginTop:90}}>
 <h2 style={{fontSize:24,margin:'0 0 6px'}}>Simple Pricing For Every Country</h2>
 <p style={{fontSize:13,color:'#666',margin:'0 0 14px'}}>Login to see price for your country only. Other country prices are not shown.</p>
@@ -70,7 +101,7 @@ return (
 <div style={{...section,textAlign:'center',paddingBottom:50}}>
 <h2 style={{fontSize:22}}>Frequently Asked Questions</h2>
 <p style={{fontSize:13,color:'#666',textAlign:'left',maxWidth:700,margin:'12px auto',lineHeight:1.8}}><b>Do guests need an app?</b> - No. Scan QR, take selfie, download.<br/><b>Is my QR permanent?</b> - Yes. One QR for all events.<br/><b>When do photos delete?</b> - As per your plan. Free event deletes in 12 hours.</p>
-<a href="/signup" style={{display:'inline-block',background:'#FF3B30',color:'#fff',padding:'13px 30px',borderRadius:30,fontWeight:800,fontSize:14,textDecoration:'none',marginTop:10}}>Start Free Event Now</a>
+<a href="/signup" style={{display:'inline-block',background:'#FF3B30',color:'#fff',padding:'16px 36px',borderRadius:30,fontWeight:800,fontSize:16,textDecoration:'none',marginTop:10}}>Start Free Event Now</a>
 </div>
 
 </div>

@@ -1,6 +1,12 @@
 "use client";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 function LoginForm() {
   const router = useRouter();
@@ -10,19 +16,91 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [country, setCountry] = useState("");
-  const [showCountry, setShowCountry] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
 
+  // FIX 1: Already login ayyi unte - malli login adagakudadu
   useEffect(() => {
-    // Pre-fill email from signup, and check if country already exists
-    const savedEmail = localStorage.getItem("picqr_user_email") || localStorage.getItem("picqr_email") || "";
-    if (savedEmail) setEmail(savedEmail);
-    const savedCountry = localStorage.getItem("picqr_country") || localStorage.getItem("picqr_user_country") || "";
-    if (savedCountry) setCountry(savedCountry);
-  }, []);
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        await syncProfile(data.session.user.id, data.session.user);
+        router.replace(next);
+        return;
+      }
+      const savedEmail = localStorage.getItem("picqr_user_email") || "";
+      if (savedEmail) setEmail(savedEmail);
+      setChecking(false);
+    };
+    checkSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, next]);
+
+  const setSessionStorage = (userId: string, userEmail: string, qrId: string, country: string, fullName: string) => {
+    document.cookie = "picqr_session=1; path=/; max-age=86400; SameSite=Lax";
+    localStorage.setItem("picqr_logged_in", "1");
+    localStorage.setItem("picqr_email", userEmail || "");
+    localStorage.setItem("picqr_user_email", userEmail || "");
+    localStorage.setItem("picqr_user_id", userId);
+    localStorage.setItem("picqr_qr_id", qrId);
+    localStorage.setItem("picqr_user_name", fullName);
+    if (country) {
+      localStorage.setItem("picqr_country", country);
+      localStorage.setItem("picqr_user_country", country);
+    }
+    localStorage.removeItem("picqr_demo_events");
+    localStorage.removeItem("picqr_events");
+  };
+
+  // FIX 2: Profile Sync - Google + Old User + Signup Country - Anni fix
+  const syncProfile = async (userId: string, user: any) => {
+    try {
+      // FIX: Signup lo save chesina country - Google user kosam
+      const savedSignupCountry = localStorage.getItem("picqr_signup_country") || "";
+      const savedLoginNext = localStorage.getItem("picqr_login_next") || "";
+
+      const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+
+      const qrId = `PQ-${userId.slice(0, 6).toUpperCase()}`;
+      const fullName = profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "";
+      const finalCountry = profile?.country || user.user_metadata?.country || savedSignupCountry || "";
+
+      // Profile lekapothe - Google / New user - Create chey
+      if (!profile) {
+        const newProfile = {
+          id: userId,
+          email: user.email,
+          full_name: fullName,
+          studio_name: fullName ? `${fullName} Photography` : "",
+          qr_id: qrId,
+          country: finalCountry, // FIX: "" kadu, Signup country vastundi
+          plan: "FREE",
+          plan_name: "Free Plan",
+        };
+        await supabase.from("profiles").insert(newProfile);
+        setSessionStorage(userId, user.email || "", qrId, finalCountry, fullName);
+        if (savedSignupCountry) localStorage.removeItem("picqr_signup_country");
+        return;
+      }
+
+      // FIX: Profile undi kani emaina missing aithe - Update chey
+      const updates: any = {};
+      if (!profile.qr_id) updates.qr_id = qrId;
+      if (!profile.plan) { updates.plan = "FREE"; updates.plan_name = "Free Plan"; }
+      if (!profile.country && finalCountry) updates.country = finalCountry;
+      if (!profile.full_name && fullName) updates.full_name = fullName;
+      if (!profile.studio_name && fullName) updates.studio_name = `${fullName} Photography`;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from("profiles").update(updates).eq("id", userId);
+      }
+      if (savedSignupCountry) localStorage.removeItem("picqr_signup_country");
+
+      setSessionStorage(userId, user.email || "", profile.qr_id || qrId, profile.country || finalCountry, fullName);
+    } catch {}
+  };
 
   const input = {
     width: "100%",
@@ -44,81 +122,51 @@ function LoginForm() {
     marginBottom: 6,
   };
 
-  const saveSession = (userEmail: string, userCountry: string, userName?: string) => {
-    document.cookie = "picqr_session=1; path=/; max-age=86400; SameSite=Lax";
-    localStorage.setItem("picqr_logged_in", "1");
-    localStorage.setItem("picqr_email", userEmail.toLowerCase());
-    localStorage.setItem("picqr_user_email", userEmail.toLowerCase());
-    if (userCountry) {
-      localStorage.setItem("picqr_country", userCountry);
-      localStorage.setItem("picqr_user_country", userCountry);
-    }
-    if (userName) {
-      localStorage.setItem("picqr_user_name", userName);
-      localStorage.setItem("picqr_name", userName);
-    }
-  };
-
-  const onLogin = (e: React.FormEvent) => {
+  const onLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (!email.includes("@")) return setError("Please enter a valid email address.");
+    setSuccess("");
+    const cleanEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError("Please enter a valid email address.");
     if (!password) return setError("Please enter your password.");
     if (password.length < 8) return setError("Password must be at least 8 characters.");
-
-    // If user signed up before, country must exist. If not, ask for country.
-    const savedCountry = localStorage.getItem("picqr_country") || localStorage.getItem("picqr_user_country") || country;
-    if (!savedCountry) {
-      setShowCountry(true);
-      setError("Please select your country to continue. Pricing is shown for your country only.");
-      return;
-    }
-
     setLoading(true);
-
-    // TODO: Replace with real API auth - POST /api/auth/login
-    // Server must verify password and return the registered country from DB.
-    // Frontend must not trust a country sent from the client.
-    setTimeout(() => {
-      saveSession(email, savedCountry);
-      router.push(next);
-    }, 400);
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: password });
+    if (authError) {
+      setLoading(false);
+      if (authError.message.toLowerCase().includes("email not confirmed")) return setError("Please verify your email first. Check your inbox for verification link.");
+      if (authError.message.includes("Invalid login")) return setError("Wrong email or password. Please try again.");
+      return setError(authError.message);
+    }
+    if (!data.user) { setLoading(false); return setError("Login failed. Please try again."); }
+    await syncProfile(data.user.id, data.user);
+    router.push(next);
+    router.refresh();
   };
 
-  const onGoogleLogin = () => {
+  // FIX 3: Google - next ni save chesi, callback ki pampali
+  const onGoogleLogin = async () => {
     setError("");
-    const savedCountry = localStorage.getItem("picqr_country") || localStorage.getItem("picqr_user_country") || country;
-
-    // Google flow - If no country saved yet, ask for country first
-    if (!savedCountry) {
-      setShowCountry(true);
-      setError("Please select your country first, then continue with Google.");
-      return;
-    }
-
     setGoogleLoading(true);
-
-    // TODO: Replace with real Google OAuth - /api/auth/google
-    // After Google verifies the user, server must return the registered country.
-    // If this is a new Google user, server must create the account with the selected country.
-    setTimeout(() => {
-      const googleEmail = email && email.includes("@") ? email : localStorage.getItem("picqr_user_email") || "user@gmail.com";
-      const googleName = localStorage.getItem("picqr_user_name") || localStorage.getItem("picqr_name") || "Photographer";
-      saveSession(googleEmail, savedCountry, googleName);
-      router.push(next);
-    }, 500);
+    localStorage.setItem("picqr_login_next", next);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
+    });
+    if (error) { setError(error.message); setGoogleLoading(false); }
   };
 
-  const onConfirmCountryAndGoogle = () => {
-    if (!country) {
-      setError("Please select your country.");
-      return;
-    }
-    setShowCountry(false);
+  const onForgot = async () => {
+    if (!email.includes("@")) return setError("Enter your email first, then click Forgot Password.");
     setError("");
-    onGoogleLogin();
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: `${window.location.origin}/login`,
+    });
+    if (error) return setError(error.message);
+    setSuccess("Password reset link sent to your email. Check inbox.");
   };
+
+  if (checking) return <div style={{ padding: 60, textAlign: "center", fontFamily: "Arial" }}>Checking login...</div>;
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg,#5B00B8,#FF7A2F)", fontFamily: "Arial", padding: 16 }}>
@@ -129,20 +177,16 @@ function LoginForm() {
           Sign in to continue to PicQR.<br />
           <span style={{ color: "#5B00B8", fontWeight: 700 }}>Your photos. Your QR. Your pricing.</span>
         </p>
-
         <button onClick={onGoogleLogin} type="button" disabled={googleLoading} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: 13, borderRadius: 12, border: "1.5px solid #E5E0F0", fontWeight: 700, width: "100%", background: "#fff", cursor: googleLoading ? "not-allowed" : "pointer", fontSize: 14 }}>
           <span style={{ background: "#fff", borderRadius: "50%", width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, border: "1px solid #eee" }}><span style={{ color: "#4285F4" }}>G</span></span>
           {googleLoading ? "Connecting with Google..." : "Continue with Google"}
         </button>
-
         <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0", color: "#999", fontSize: 12 }}><span style={{ flex: 1, borderTop: "1px solid #eee" }}></span>OR<span style={{ flex: 1, borderTop: "1px solid #eee" }}></span></div>
-
         <form onSubmit={onLogin} style={{ textAlign: "left" }}>
           <div style={{ marginBottom: 12 }}>
             <label style={label}>Email</label>
             <input style={input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" type="email" />
           </div>
-
           <div style={{ marginBottom: 8 }}>
             <label style={label}>Password</label>
             <div style={{ position: "relative" }}>
@@ -151,45 +195,17 @@ function LoginForm() {
                 {showPassword ? "Hide" : "Show"}
               </button>
             </div>
-            <p style={{ fontSize: 11, color: "#888", margin: "6px 0 0" }}>Password must be at least 8 characters.</p>
-          </div>
-
-          {showCountry && (
-            <div style={{ marginBottom: 12, background: "#F7F3FF", border: "1px solid #EDEBFF", borderRadius: 12, padding: 12 }}>
-              <label style={label}>Country - Required for pricing</label>
-              <select value={country} onChange={(e) => setCountry(e.target.value)} style={{ ...input, cursor: "pointer", background: "#fff" }}>
-                <option value="" disabled>Select your country</option>
-                <option>India</option>
-                <option>Pakistan</option>
-                <option>Bangladesh</option>
-                <option>Sri Lanka</option>
-                <option>Bhutan</option>
-                <option>Nepal</option>
-                <option>UAE</option>
-                <option>Qatar</option>
-                <option>Saudi Arabia</option>
-                <option>Singapore</option>
-                <option>Malaysia</option>
-                <option>USA</option>
-                <option>UK</option>
-                <option>Canada</option>
-                <option>Australia</option>
-                <option>Europe</option>
-                <option>Other</option>
-              </select>
-              <button type="button" onClick={onConfirmCountryAndGoogle} style={{ marginTop: 10, width: "100%", background: "#0F0A24", color: "#fff", border: "none", padding: "11px", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
-                Confirm Country & Continue with Google
-              </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+              <p style={{ fontSize: 11, color: "#888", margin: 0 }}>Password must be at least 8 characters.</p>
+              <button type="button" onClick={onForgot} style={{ background: "none", border: "none", fontSize: 12, fontWeight: 700, color: "#5B00B8", cursor: "pointer", padding: 0 }}>Forgot Password?</button>
             </div>
-          )}
-
-          {error && <p style={{ background: "#FFF0F0", color: "#D00", fontSize: 13, padding: "10px 12px", borderRadius: 10, margin: "0 0 12px", textAlign: "left" }}>{error}</p>}
-
+          </div>
+          {error && <p style={{ background: "#FFF0F0", color: "#D00", fontSize: 13, padding: "10px 12px", borderRadius: 10, margin: "12px 0", textAlign: "left" }}>{error}</p>}
+          {success && <p style={{ background: "#E8FFF0", color: "#0A7A2F", fontSize: 13, padding: "10px 12px", borderRadius: 10, margin: "12px 0", textAlign: "left" }}>{success}</p>}
           <button type="submit" disabled={loading} style={{ width: "100%", background: loading ? "#999" : "linear-gradient(90deg,#5B00B8,#FF7A2F)", color: "#fff", border: "none", padding: "13px", borderRadius: 12, fontWeight: 800, fontSize: 15, cursor: loading ? "not-allowed" : "pointer" }}>
             {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
-
         <p style={{ fontSize: 13, textAlign: "center", marginTop: 16, color: "#666" }}>
           New user? <a href="/signup" style={{ color: "#5B00B8", fontWeight: 800 }}>Create Free Account</a>
         </p>
