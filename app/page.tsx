@@ -38,15 +38,15 @@ return (
 {/* HERO */}
 <div style={{...section,display:'flex',gap:28,flexWrap:'wrap'}}>
 <div style={{flex:'1 1 360px'}}>
-<h1 style={{fontSize:58,lineHeight:1.05,margin:'10px 0',fontWeight:900,letterSpacing:-1}}>First Event <span style={{color:'#FF7A2F'}}>FREE</span> -<br/>12 Hours Only</h1>
-<p style={{fontSize:15,color:'#555',lineHeight:1.6}}>Instant photo delivery for weddings via QR code. Guests upload and download instantly - no app needed.</p>
+<h1 style={{fontSize:72,lineHeight:1.02,margin:'10px 0',fontWeight:900,letterSpacing:-1.5}}>First Event <span style={{color:'#FF7A2F'}}>FREE</span> -<br/>12 Hours Only</h1>
+<p style={{fontSize:17,color:'#555',lineHeight:1.6,fontWeight:600}}>Instant photo delivery for weddings via QR code. Guests upload and download instantly - no app needed.</p>
 
-<div style={{background:'#fff',border:'1px solid #F0E8FF',borderRadius:16,padding:20,boxShadow:'0 12px 30px rgba(91,0,184,0.08)',marginTop:16}}>
-<a href="/signup" style={{display:'block',width:'100%',boxSizing:'border-box' as const,textAlign:'center',background:'linear-gradient(90deg,#5B00B8,#FF7A2F)',color:'#fff',border:'none',padding:'20px 16px',borderRadius:14,fontWeight:900,fontSize:20,cursor:'pointer',textDecoration:'none'}}>Create Free Event →</a>
-<p style={{fontSize:12,color:'#888',textAlign:'center',margin:'12px 0 0'}}>No credit card required - Free for 12 hours</p>
+<div style={{background:'#fff',border:'1px solid #F0E8FF',borderRadius:18,padding:24,boxShadow:'0 12px 30px rgba(91,0,184,0.08)',marginTop:20}}>
+<a href="/signup" style={{display:'block',width:'100%',boxSizing:'border-box' as const,textAlign:'center',background:'linear-gradient(90deg,#5B00B8,#FF7A2F)',color:'#fff',border:'none',padding:'26px 16px',borderRadius:16,fontWeight:900,fontSize:26,cursor:'pointer',textDecoration:'none',boxShadow:'0 10px 25px rgba(255,122,47,0.35)'}}>Create Free Event →</a>
+<p style={{fontSize:13,color:'#888',textAlign:'center',margin:'14px 0 0',fontWeight:700}}>No credit card required - Free for 12 hours</p>
 </div>
 
-<div style={{display:'flex',gap:14,marginTop:16,fontSize:12,fontWeight:700,color:'#333',flexWrap:'wrap' as const}}>
+<div style={{display:'flex',gap:14,marginTop:16,fontSize:13,fontWeight:700,color:'#333',flexWrap:'wrap' as const}}>
 <span>✓ No App Needed</span><span>✓ Original Quality</span><span>✓ Permanent QR</span>
 </div>
 </div>
