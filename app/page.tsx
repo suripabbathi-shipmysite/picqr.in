@@ -3,29 +3,45 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 export default function Home(){
 const router = useRouter();
 const [checking, setChecking] = useState(true);
 
-// LOGIN AYINA USER - DIRECT DASHBOARD
+// LOGIN USER - DIRECT DASHBOARD - WITH TIMEOUT
 useEffect(() => {
+  let done = false;
+  const finish = () => {
+    if(!done){ done = true; setChecking(false); }
+  };
+  const timer = setTimeout(finish, 2500);
   const check = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      router.replace("/dashboard");
-      return;
+    try {
+      if(!supabase){
+        finish();
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        clearTimeout(timer);
+        router.replace("/dashboard");
+        return;
+      }
+    } catch(e) {
+      console.log("Session check failed, showing home");
     }
-    setChecking(false);
+    finish();
   };
   check();
+  return () => { done = true; clearTimeout(timer); };
 }, [router]);
 
-// Login check avutunnappudu landing chupinchakudadu - blank loading
 if (checking) {
   return <div style={{padding:60,textAlign:'center',fontFamily:'Arial'}}>Loading...</div>;
 }

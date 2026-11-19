@@ -4,10 +4,12 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Logo from "../../components/Logo";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 type EventItem = {
   id: string;
@@ -24,24 +26,26 @@ type EventItem = {
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('picqr-db', 1)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    try {
+      const req = indexedDB.open('picqr-db', 1)
+      req.onupgradeneeded = () => {
+        const db = req.result
+        if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
+      }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    } catch (e) { reject(e); }
   })
 }
 
-// FIX 2: Real Photo Count - Supabase thumb/ nundi, lekapothe IndexedDB
+// REAL PHOTO COUNT - From Supabase thumb folder, fallback IndexedDB
 async function getRealPhotoCount(eventId: string): Promise<number> {
   try {
+    if(!supabase) return 0;
     const { data } = await supabase.storage.from("event-photos").list(`${eventId}/thumb`, { limit: 1000 });
     if (data && data.length > 0) {
       return data.filter(f => f.name !== ".emptyFolderPlaceholder").length;
     }
-    // Fallback - Old structure
     const { data: old } = await supabase.storage.from("event-photos").list(eventId, { limit: 1000 });
     if (old && old.length > 0) {
       const files = old.filter(f => f.name !== "thumb" && f.name !== "original" && f.name !== ".emptyFolderPlaceholder");
@@ -76,7 +80,6 @@ export default function Dashboard() {
   const [studioLogo, setStudioLogo] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState("");
   const [watermark, setWatermark] = useState(true);
-  // FIX 1: Plan hardcoded kadu - DB nundi
   const [plan, setPlan] = useState<"FREE" | "PAID">("FREE");
   const [planExpiry, setPlanExpiry] = useState("");
   const [planName, setPlanName] = useState("Free Plan");
@@ -84,42 +87,53 @@ export default function Dashboard() {
   const [realPhotos, setRealPhotos] = useState<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
-  useEffect(() => { setOrigin(window.location.origin); }, []);
+  useEffect(() => { try{ setOrigin(window.location.origin); }catch{} }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const loadUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.replace("/login?next=/dashboard"); return; }
-      const user = session.user;
-      setUserEmail(user.email || "");
-      const qrId = `PQ-${user.id.slice(0, 6).toUpperCase()}`;
-      setUserQrId(qrId);
+      try {
+        if(!supabase){ if(!cancelled) setLoadingUser(false); router.replace("/login?next=/dashboard"); return; }
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
+        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]) as any;
+        if (!session) { router.replace("/login?next=/dashboard"); return; }
+        if(cancelled) return;
+        const user = session.user;
+        setUserEmail(user.email || "");
+        const qrId = `PQ-${user.id.slice(0, 6).toUpperCase()}`;
+        setUserQrId(qrId);
 
-      const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-      if (profile) {
-        setOwnerName(profile.full_name || "");
-        setStudioName(profile.studio_name || (profile.full_name ? `${profile.full_name} Photography` : ""));
-        setMobile(profile.mobile || "");
-        if (profile.studio_logo) setStudioLogo(profile.studio_logo);
-        if (profile.watermark !== undefined) setWatermark(profile.watermark);
-        // FIX 1: Real Plan - profiles / subscriptions nundi
-        const p = (profile.plan || profile.current_plan || "FREE").toUpperCase();
-        setPlan(p === "FREE" ? "FREE" : "PAID");
-        setPlanName(profile.plan_name || (p === "FREE" ? "Free Plan" : "Paid Plan"));
-        if (profile.plan_expiry) {
-          setPlanExpiry(new Date(profile.plan_expiry).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }));
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+        if(cancelled) return;
+        if (profile) {
+          setOwnerName(profile.full_name || "");
+          setStudioName(profile.studio_name || (profile.full_name ? `${profile.full_name} Photography` : ""));
+          setMobile(profile.mobile || "");
+          if (profile.studio_logo) setStudioLogo(profile.studio_logo);
+          if (profile.watermark !== undefined) setWatermark(profile.watermark);
+          const p = (profile.plan || profile.current_plan || "FREE").toUpperCase();
+          setPlan(p === "FREE" ? "FREE" : "PAID");
+          setPlanName(profile.plan_name || (p === "FREE" ? "Free Plan" : "Paid Plan"));
+          if (profile.plan_expiry) {
+            setPlanExpiry(new Date(profile.plan_expiry).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }));
+          } else {
+            setPlanExpiry(p === "FREE" ? "Free Event - 12 Hours Auto Delete" : "Active");
+          }
         } else {
-          setPlanExpiry(p === "FREE" ? "Free Event - 12 Hours Auto Delete" : "Active");
+          const metaName = user.user_metadata?.full_name || "";
+          setOwnerName(metaName);
+          setStudioName(metaName ? `${metaName} Photography` : "");
+          setPlan("FREE"); setPlanName("Free Plan"); setPlanExpiry("Free Event - 12 Hours Auto Delete");
         }
-      } else {
-        const metaName = user.user_metadata?.full_name || "";
-        setOwnerName(metaName);
-        setStudioName(metaName ? `${metaName} Photography` : "");
-        setPlan("FREE"); setPlanName("Free Plan"); setPlanExpiry("Free Event - 12 Hours Auto Delete");
+      } catch {
+        try{ router.replace("/login?next=/dashboard"); }catch{}
+      } finally {
+        if(!cancelled) setLoadingUser(false);
       }
-      setLoadingUser(false);
     };
     loadUser();
+    return () => { cancelled = true; };
   }, [router]);
 
   const guestLink = userQrId ? `${origin}/guest?id=${userQrId}` : `${origin}/guest`;
@@ -127,51 +141,52 @@ export default function Dashboard() {
 
   useEffect(() => {
     const loadEvents = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      const { data } = await supabase.from("events").select("*").eq("user_id", session.user.id).order("created_at", { ascending: false });
-      if (data && data.length > 0) {
-        setEvents(data.map((e: any) => ({
-          id: e.qr_id || e.id, name: e.name, date: e.date || e.created_at?.slice(0, 10),
-          photos: 0, downloads: e.downloads || 0, scans: e.scans || 0, selfieSearch: e.selfie_search || 0,
-          status: e.status || "Active", createdAt: new Date(e.created_at).getTime(), plan: e.plan || "FREE",
-        })));
-      }
+      try {
+        if(!supabase) return;
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const { data } = await supabase.from("events").select("*").eq("user_id", session.user.id).order("created_at", { ascending: false });
+        if (data && data.length > 0) {
+          setEvents(data.map((e: any) => ({
+            id: e.qr_id || e.id, name: e.name, date: e.date || e.created_at?.slice(0, 10),
+            photos: 0, downloads: e.downloads || 0, scans: e.scans || 0, selfieSearch: e.selfie_search || 0,
+            status: e.status || "Active", createdAt: new Date(e.created_at).getTime(), plan: e.plan || "FREE",
+          })));
+        }
+      } catch {}
     };
     if (!loadingUser) loadEvents();
   }, [loadingUser]);
 
-  // FIX 4: Counts - Events vachaka matrame load
   const loadRealCounts = useCallback(async () => {
-    if (events.length === 0) return;
+    if (events.length === 0 && !userQrId) return;
     setRefreshing(true);
-    const counts: Record<string, number> = {};
-    for (const ev of events) {
-      counts[ev.id] = await getRealPhotoCount(ev.id);
-    }
-    // Permanent QR ki kuda count - Upload direct QR ki ayithe
-    if (userQrId) {
-      const qrCount = await getRealPhotoCount(userQrId);
-      if (qrCount > 0 && counts[userQrId] === undefined) counts[userQrId] = qrCount;
-    }
-    setRealPhotos(counts);
-    setRefreshing(false);
+    try {
+      const counts: Record<string, number> = {};
+      for (const ev of events) {
+        counts[ev.id] = await getRealPhotoCount(ev.id);
+      }
+      if (userQrId) {
+        const qrCount = await getRealPhotoCount(userQrId);
+        if (qrCount > 0 && counts[userQrId] === undefined) counts[userQrId] = qrCount;
+        if (qrCount > 0) counts[userQrId] = Math.max(counts[userQrId] || 0, qrCount);
+      }
+      setRealPhotos(counts);
+    } catch {} finally { setRefreshing(false); }
   }, [events, userQrId]);
 
-  useEffect(() => { if (events.length > 0) loadRealCounts(); }, [events, loadRealCounts]);
+  useEffect(() => { if (events.length > 0 || userQrId) loadRealCounts(); }, [events, loadRealCounts, userQrId]);
 
   const getDisplayPhotos = (ev: EventItem) => {
     if (realPhotos[ev.id] !== undefined) return realPhotos[ev.id];
     return ev.photos;
   };
   const totalPhotos = events.reduce((a, e) => a + getDisplayPhotos(e), 0);
-  // Permanent QR photos kuda kalupu - events lo lekapothe
   const qrPhotos = realPhotos[userQrId] || 0;
   const displayTotalPhotos = events.length === 0 ? qrPhotos : totalPhotos;
   const totalDownloads = events.reduce((a, e) => a + e.downloads, 0);
   const totalScans = events.reduce((a, e) => a + e.scans, 0);
   const totalSelfie = events.reduce((a, e) => a + e.selfieSearch, 0);
-  // Original photos average ~4MB - Storage correct ga
   const storageUsedGB = (displayTotalPhotos * 4 / 1024).toFixed(2);
   const storageLimitGB = plan === "FREE" ? 2 : 50;
   const storagePercent = Math.min(100, Math.round((Number(storageUsedGB) / storageLimitGB) * 100));
@@ -205,20 +220,23 @@ export default function Dashboard() {
   const go = (path: string) => { router.push(path); };
   const openEvent = (id: string) => go(`/events?id=${id}`);
   const openUpload = (id: string) => go(`/upload?event=${id}`);
-  const logout = async () => { await supabase.auth.signOut(); document.cookie = "picqr_session=; path=/; max-age=0"; localStorage.removeItem("picqr_logged_in"); window.location.href = "/"; };
+  const logout = async () => { try{ if(supabase) await supabase.auth.signOut(); }catch{} document.cookie = "picqr_session=; path=/; max-age=0"; try{ localStorage.removeItem("picqr_logged_in"); }catch{} window.location.href = "/"; };
   const saveProfile = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      await supabase.from("profiles").upsert({ id: session.user.id, email: userEmail, full_name: ownerName, studio_name: studioName, mobile: mobile, studio_logo: studioLogo, watermark: watermark, qr_id: userQrId });
-    }
+    try {
+      if(!supabase) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await supabase.from("profiles").upsert({ id: session.user.id, email: userEmail, full_name: ownerName, studio_name: studioName, mobile: mobile, studio_logo: studioLogo, watermark: watermark, qr_id: userQrId });
+      }
+    } catch {}
     setSavedMsg("Saved Successfully"); setTimeout(() => setSavedMsg(""), 2500);
   };
-  // FIX 3: Logo - Supabase Storage ki upload - Refresh ayina pothadu
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     const preview = URL.createObjectURL(file);
     setStudioLogo(preview);
     try {
+      if(!supabase) return;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       const fileName = `${session.user.id}/logo-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
@@ -227,15 +245,18 @@ export default function Dashboard() {
         const { data } = supabase.storage.from("event-photos").getPublicUrl(fileName);
         setStudioLogo(data.publicUrl);
         await supabase.from("profiles").update({ studio_logo: data.publicUrl }).eq("id", session.user.id);
-        setSavedMsg("Logo uploaded ✅");
+        setSavedMsg("Logo uploaded");
         setTimeout(() => setSavedMsg(""), 2500);
       }
     } catch {}
   };
   const removeLogo = async () => {
     setStudioLogo(null);
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) await supabase.from("profiles").update({ studio_logo: null }).eq("id", session.user.id);
+    try {
+      if(!supabase) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) await supabase.from("profiles").update({ studio_logo: null }).eq("id", session.user.id);
+    } catch {}
   };
   const sideLink = { display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px', borderRadius: 10, color: '#ccc', fontSize: 13, cursor: 'pointer', background: 'transparent', border: 'none', width: '100%', textAlign: 'left' as const };
   const sideActive = { ...sideLink, background: 'linear-gradient(90deg,#5B00B8,#FF7A2F)', color: '#fff', fontWeight: 800 };

@@ -4,7 +4,7 @@ import LayoutClient from "./layout-client";
 
 export const metadata: Metadata = {
   title: "PicQR.in - Instant Photo Delivery for Weddings via QR Code | First Event FREE",
-  description: "PicQR.in - Photographers ki instant photo delivery. Wedding photos ni QR code tho guests ki same day delivery. No app needed, original quality, selfie search. First Event FREE - 12 Hours Only.",
+  description: "PicQR.in - Instant photo delivery for photographers. Wedding photos delivered to guests same day via QR code. No app needed, original quality, selfie search. First Event FREE - 12 Hours Only.",
   keywords: ["PicQR", "picqr.in", "wedding photo delivery", "QR code photo sharing", "photographer tool India", "instant photo delivery", "wedding photography QR"],
   authors: [{ name: "PicQR.in" }],
   creator: "PicQR.in",

@@ -3,10 +3,12 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 function LoginForm() {
   const router = useRouter();
@@ -22,45 +24,56 @@ function LoginForm() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [checking, setChecking] = useState(true);
 
-  // FIX 1: Already login ayyi unte - malli login adagakudadu
+  // CHECK SESSION - WITH TIMEOUT - SHOW FORM IN 2.5 SEC
   useEffect(() => {
+    let done = false;
+    const finish = () => { if(!done){ done = true; setChecking(false); } };
+    const timer = setTimeout(finish, 2500);
     const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        await syncProfile(data.session.user.id, data.session.user);
-        router.replace(next);
-        return;
-      }
-      const savedEmail = localStorage.getItem("picqr_user_email") || "";
-      if (savedEmail) setEmail(savedEmail);
-      setChecking(false);
+      try {
+        if(!supabase){ finish(); return; }
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          await syncProfile(data.session.user.id, data.session.user);
+          clearTimeout(timer);
+          router.replace(next);
+          return;
+        }
+      } catch {}
+      try {
+        const savedEmail = localStorage.getItem("picqr_user_email") || "";
+        if (savedEmail) setEmail(savedEmail);
+      } catch {}
+      finish();
     };
     checkSession();
+    return () => { done = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, next]);
 
   const setSessionStorage = (userId: string, userEmail: string, qrId: string, country: string, fullName: string) => {
     document.cookie = "picqr_session=1; path=/; max-age=86400; SameSite=Lax";
-    localStorage.setItem("picqr_logged_in", "1");
-    localStorage.setItem("picqr_email", userEmail || "");
-    localStorage.setItem("picqr_user_email", userEmail || "");
-    localStorage.setItem("picqr_user_id", userId);
-    localStorage.setItem("picqr_qr_id", qrId);
-    localStorage.setItem("picqr_user_name", fullName);
-    if (country) {
-      localStorage.setItem("picqr_country", country);
-      localStorage.setItem("picqr_user_country", country);
-    }
-    localStorage.removeItem("picqr_demo_events");
-    localStorage.removeItem("picqr_events");
+    try {
+      localStorage.setItem("picqr_logged_in", "1");
+      localStorage.setItem("picqr_email", userEmail || "");
+      localStorage.setItem("picqr_user_email", userEmail || "");
+      localStorage.setItem("picqr_user_id", userId);
+      localStorage.setItem("picqr_qr_id", qrId);
+      localStorage.setItem("picqr_user_name", fullName);
+      if (country) {
+        localStorage.setItem("picqr_country", country);
+        localStorage.setItem("picqr_user_country", country);
+      }
+      localStorage.removeItem("picqr_demo_events");
+      localStorage.removeItem("picqr_events");
+    } catch {}
   };
 
-  // FIX 2: Profile Sync - Google + Old User + Signup Country - Anni fix
+  // PROFILE SYNC - Google + Old User + Signup Country
   const syncProfile = async (userId: string, user: any) => {
     try {
-      // FIX: Signup lo save chesina country - Google user kosam
-      const savedSignupCountry = localStorage.getItem("picqr_signup_country") || "";
-      const savedLoginNext = localStorage.getItem("picqr_login_next") || "";
+      if(!supabase) return;
+      const savedSignupCountry = (()=>{ try{ return localStorage.getItem("picqr_signup_country") || ""; }catch{ return ""; } })();
 
       const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
 
@@ -68,7 +81,6 @@ function LoginForm() {
       const fullName = profile?.full_name || user.user_metadata?.full_name || user.email?.split("@")[0] || "";
       const finalCountry = profile?.country || user.user_metadata?.country || savedSignupCountry || "";
 
-      // Profile lekapothe - Google / New user - Create chey
       if (!profile) {
         const newProfile = {
           id: userId,
@@ -76,17 +88,16 @@ function LoginForm() {
           full_name: fullName,
           studio_name: fullName ? `${fullName} Photography` : "",
           qr_id: qrId,
-          country: finalCountry, // FIX: "" kadu, Signup country vastundi
+          country: finalCountry,
           plan: "FREE",
           plan_name: "Free Plan",
         };
         await supabase.from("profiles").insert(newProfile);
         setSessionStorage(userId, user.email || "", qrId, finalCountry, fullName);
-        if (savedSignupCountry) localStorage.removeItem("picqr_signup_country");
+        try{ if (savedSignupCountry) localStorage.removeItem("picqr_signup_country"); }catch{}
         return;
       }
 
-      // FIX: Profile undi kani emaina missing aithe - Update chey
       const updates: any = {};
       if (!profile.qr_id) updates.qr_id = qrId;
       if (!profile.plan) { updates.plan = "FREE"; updates.plan_name = "Free Plan"; }
@@ -96,7 +107,7 @@ function LoginForm() {
       if (Object.keys(updates).length > 0) {
         await supabase.from("profiles").update(updates).eq("id", userId);
       }
-      if (savedSignupCountry) localStorage.removeItem("picqr_signup_country");
+      try{ if (savedSignupCountry) localStorage.removeItem("picqr_signup_country"); }catch{}
 
       setSessionStorage(userId, user.email || "", profile.qr_id || qrId, profile.country || finalCountry, fullName);
     } catch {}
@@ -130,25 +141,35 @@ function LoginForm() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError("Please enter a valid email address.");
     if (!password) return setError("Please enter your password.");
     if (password.length < 8) return setError("Password must be at least 8 characters.");
+    if(!supabase) return setError("Server not connected. Please try after 1 min. Check Vercel Env keys.");
     setLoading(true);
-    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: password });
-    if (authError) {
+    try {
+      const loginPromise = supabase.auth.signInWithPassword({ email: cleanEmail, password: password });
+      const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("Network slow. Please try again.")), 15000));
+      const { data, error: authError } = await Promise.race([loginPromise, timeoutPromise]) as any;
+      if (authError) {
+        setLoading(false);
+        if (authError.message.toLowerCase().includes("email not confirmed")) return setError("Please verify your email first. Check your inbox for verification link.");
+        if (authError.message.includes("Invalid login")) return setError("Wrong email or password. Please try again.");
+        return setError(authError.message);
+      }
+      if (!data.user) { setLoading(false); return setError("Login failed. Please try again."); }
+      await syncProfile(data.user.id, data.user);
+      router.push(next);
+      router.refresh();
+    } catch (err: any) {
+      setError(err.message || "Login failed. Please try again.");
+    } finally {
       setLoading(false);
-      if (authError.message.toLowerCase().includes("email not confirmed")) return setError("Please verify your email first. Check your inbox for verification link.");
-      if (authError.message.includes("Invalid login")) return setError("Wrong email or password. Please try again.");
-      return setError(authError.message);
     }
-    if (!data.user) { setLoading(false); return setError("Login failed. Please try again."); }
-    await syncProfile(data.user.id, data.user);
-    router.push(next);
-    router.refresh();
   };
 
-  // FIX 3: Google - next ni save chesi, callback ki pampali
+  // GOOGLE LOGIN - Save next, redirect to callback
   const onGoogleLogin = async () => {
     setError("");
+    if(!supabase){ setError("Server not connected. Try after 1 min."); return; }
     setGoogleLoading(true);
-    localStorage.setItem("picqr_login_next", next);
+    try{ localStorage.setItem("picqr_login_next", next); }catch{}
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
@@ -159,6 +180,7 @@ function LoginForm() {
   const onForgot = async () => {
     if (!email.includes("@")) return setError("Enter your email first, then click Forgot Password.");
     setError("");
+    if(!supabase) return setError("Server not connected. Try after 1 min.");
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
       redirectTo: `${window.location.origin}/login`,
     });

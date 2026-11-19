@@ -3,22 +3,26 @@ import { useState, useRef, Suspense, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from "@supabase/supabase-js"
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 type UploadItem = { id: string; name: string; file: File; preview: string; status: 'ready' | 'uploading' | 'done' | 'error' }
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('picqr-db', 1)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    try {
+      const req = indexedDB.open('picqr-db', 1)
+      req.onupgradeneeded = () => {
+        const db = req.result
+        if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
+      }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    } catch (e) { reject(e); }
   })
 }
 
@@ -41,7 +45,7 @@ async function savePhotosBackup(eventId: string, previews: string[]) {
   } catch {}
 }
 
-// THUMB - Chupinchadaniki + Face Match ki matrame - 1200px, 0.8
+// THUMB - For grid + face match only - 1200px, 0.8 quality
 async function makeThumb(file: File): Promise<Blob> {
   const img = new Image()
   img.src = URL.createObjectURL(file)
@@ -67,17 +71,29 @@ function UploadContent() {
   const [progress, setProgress] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // LOGIN CHECK + REAL QR ID
+  // LOGIN CHECK + REAL QR ID - WITH TIMEOUT
   useEffect(() => {
+    let cancelled = false;
     const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.replace("/login?next=/upload"); return; }
-      const qrId = `PQ-${session.user.id.slice(0, 6).toUpperCase()}`;
-      setUserQrId(qrId);
-      if (!urlEvent) setEventId(qrId);
-      setChecking(false);
+      try {
+        if(!supabase){ router.replace("/login?next=/upload"); return; }
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
+        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]) as any;
+        if (!session) { router.replace("/login?next=/upload"); return; }
+        if(cancelled) return;
+        const qrId = `PQ-${session.user.id.slice(0, 6).toUpperCase()}`;
+        setUserQrId(qrId);
+        if (!urlEvent) setEventId(qrId);
+      } catch {
+        try{ router.replace("/login?next=/upload"); }catch{}
+        return;
+      } finally {
+        if(!cancelled) setChecking(false);
+      }
     };
     init();
+    return () => { cancelled = true; };
   }, [router, urlEvent]);
 
   const onSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,7 +102,7 @@ function UploadContent() {
     const next: UploadItem[] = files.map(file => ({
       id: Math.random().toString(36).slice(2),
       name: file.name,
-      file, // ORIGINAL FILE - dani compress cheyamu
+      file,
       preview: URL.createObjectURL(file),
       status: 'ready' as const
     }))
@@ -98,6 +114,7 @@ function UploadContent() {
     if (!items.length) return alert('Please select photos first')
     const finalEventId = eventId || userQrId
     if (!finalEventId) return alert('Event ID missing')
+    if(!supabase) return alert('Server not connected. Please try after 1 min. Check Vercel Env keys.')
     setUploading(true); setMessage(''); setProgress("")
     let success = 0, failed = 0
     try {
@@ -108,7 +125,7 @@ function UploadContent() {
         setItems(prev => prev.map(x => x.id === item.id ? { ...x, status: 'uploading' } : x))
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}-${item.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`
 
-        // 1. ORIGINAL - Download kosam - 100% Quality
+        // 1. ORIGINAL - For download - 100% Quality
         const { error: origErr } = await supabase.storage.from("event-photos").upload(`${finalEventId}/original/${fileName}`, item.file, { upsert: false, contentType: item.file.type || "image/jpeg" })
         if (origErr) {
           console.error(origErr)
@@ -117,7 +134,7 @@ function UploadContent() {
           continue
         }
 
-        // 2. THUMB - Grid + Face Match kosam - Fast, Compressed
+        // 2. THUMB - For grid + face match - Fast, Compressed
         try {
           const thumbBlob = await makeThumb(item.file)
           await supabase.storage.from("event-photos").upload(`${finalEventId}/thumb/${fileName}`, thumbBlob, { upsert: false, contentType: "image/jpeg" })
@@ -129,7 +146,7 @@ function UploadContent() {
         setItems(prev => prev.map(x => x.id === item.id ? { ...x, status: 'done' } : x))
       }
       if (previewsForBackup.length) await savePhotosBackup(finalEventId, previewsForBackup)
-      setMessage(`✅ Uploaded ${success} photos to ${finalEventId}. ${failed ? `${failed} failed.` : ""} Guest can now scan QR and see them. Original quality saved for download.`)
+      setMessage(`Uploaded ${success} photos to ${finalEventId}. ${failed ? `${failed} failed.` : ""} Guest can now scan QR and see them. Original quality saved for download.`)
       if (success > 0) setTimeout(() => router.push(`/events?id=${finalEventId}`), 1500)
     } catch (e: any) {
       alert('Upload failed: ' + (e.message || 'Try again'))
@@ -162,7 +179,7 @@ function UploadContent() {
             <div key={item.id} style={{ background: '#fff', borderRadius: 12, overflow: 'hidden', border: '1px solid #F1E6FF' }}>
               <img src={item.preview} alt={item.name} style={{ width: '100%', height: 140, objectFit: 'cover' }} />
               <div style={{ padding: 10, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: item.status === 'done' ? 'green' : item.status === 'error' ? 'red' : item.status === 'uploading' ? '#FF7A2F' : '#666', fontWeight: 700 }}>{item.status === 'done' ? '✅ Done' : item.status === 'error' ? '❌ Failed' : item.status === 'uploading' ? 'Uploading...' : 'Ready'}</span>
+                <span style={{ color: item.status === 'done' ? 'green' : item.status === 'error' ? 'red' : item.status === 'uploading' ? '#FF7A2F' : '#666', fontWeight: 700 }}>{item.status === 'done' ? 'Done' : item.status === 'error' ? 'Failed' : item.status === 'uploading' ? 'Uploading...' : 'Ready'}</span>
                 <button onClick={() => setItems((p) => p.filter((x) => x.id !== item.id))} style={{ border: 'none', background: 'none', color: '#999', cursor: 'pointer' }}>Remove</button>
               </div>
             </div>

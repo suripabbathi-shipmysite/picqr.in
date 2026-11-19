@@ -4,22 +4,26 @@ import { useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import * as faceapi from "face-api.js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('picqr-db', 1)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    try {
+      const req = indexedDB.open('picqr-db', 1)
+      req.onupgradeneeded = () => {
+        const db = req.result
+        if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'key' })
+      }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    } catch (e) { reject(e); }
   })
 }
 
@@ -47,6 +51,7 @@ function GuestContent() {
   const uploadRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const loadModels = async () => {
       try {
         await Promise.all([
@@ -54,61 +59,64 @@ function GuestContent() {
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ]);
-        setModelsLoaded(true);
-        setModelStatus("Face detection ready ✅");
+        if(!cancelled){ setModelsLoaded(true); setModelStatus("Face detection ready"); }
       } catch (e) {
         console.error("Model load failed", e);
-        setModelStatus("Face model failed to load - try refresh");
+        if(!cancelled) setModelStatus("Face model failed to load - try refresh");
       }
     };
     loadModels();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!id) { setQrOwnerFound(false); setLoading(false); return; }
     const loadStudio = async () => {
-      const { data } = await supabase.from("profiles").select("full_name, studio_name, mobile").or(`qr_id.eq.${id},id.ilike.%${id.replace("PQ-","")}%`).limit(1).maybeSingle();
-      if (data) {
-        setStudioName(data.studio_name || `${data.full_name || ""} Photography`);
-        setStudioMobile(data.mobile || "");
-      } else {
-        setStudioName(`Photographer ${id}`);
-      }
+      try {
+        if(!supabase) return;
+        const { data } = await supabase.from("profiles").select("full_name, studio_name, mobile").or(`qr_id.eq.${id},id.ilike.%${id.replace("PQ-","")}%`).limit(1).maybeSingle();
+        if (data) {
+          setStudioName(data.studio_name || `${data.full_name || ""} Photography`);
+          setStudioMobile(data.mobile || "");
+        } else {
+          setStudioName(`Photographer ${id}`);
+        }
+      } catch {}
     };
     loadStudio();
   }, [id]);
 
-  // FIX 1: PHOTOS - thumb/ nundi - Upload tho match
+  // PHOTOS - From thumb folder - Match with upload structure
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       let photos: PhotoItem[] = [];
       try {
-        // 1. Kotta structure - thumb folder
-        const { data: thumbFiles } = await supabase.storage.from("event-photos").list(`${id}/thumb`, { limit: 200 });
-        if (thumbFiles && thumbFiles.length > 0) {
-          photos = thumbFiles.filter(f => f.name !== ".emptyFolderPlaceholder").map(f => {
-            const thumb = supabase.storage.from("event-photos").getPublicUrl(`${id}/thumb/${f.name}`).data.publicUrl;
-            const original = supabase.storage.from("event-photos").getPublicUrl(`${id}/original/${f.name}`).data.publicUrl;
-            return { thumb, original, name: f.name };
-          });
-        }
-        // 2. Paatha structure - direct folder (backward compatible)
-        if (photos.length === 0) {
-          const { data: oldFiles } = await supabase.storage.from("event-photos").list(id, { limit: 200 });
-          if (oldFiles && oldFiles.length > 0) {
-            const onlyFiles = oldFiles.filter(f => f.name !== "thumb" && f.name !== "original" && f.name !== ".emptyFolderPlaceholder");
-            if (onlyFiles.length > 0) {
-              photos = onlyFiles.map(f => {
-                const url = supabase.storage.from("event-photos").getPublicUrl(`${id}/${f.name}`).data.publicUrl;
-                return { thumb: url, original: url, name: f.name };
-              });
+        if(supabase){
+          const { data: thumbFiles } = await supabase.storage.from("event-photos").list(`${id}/thumb`, { limit: 200 });
+          if (thumbFiles && thumbFiles.length > 0) {
+            photos = thumbFiles.filter(f => f.name !== ".emptyFolderPlaceholder").map(f => {
+              const thumb = supabase.storage.from("event-photos").getPublicUrl(`${id}/thumb/${f.name}`).data.publicUrl;
+              const original = supabase.storage.from("event-photos").getPublicUrl(`${id}/original/${f.name}`).data.publicUrl;
+              return { thumb, original, name: f.name };
+            });
+          }
+          if (photos.length === 0) {
+            const { data: oldFiles } = await supabase.storage.from("event-photos").list(id, { limit: 200 });
+            if (oldFiles && oldFiles.length > 0) {
+              const onlyFiles = oldFiles.filter(f => f.name !== "thumb" && f.name !== "original" && f.name !== ".emptyFolderPlaceholder");
+              if (onlyFiles.length > 0) {
+                photos = onlyFiles.map(f => {
+                  const url = supabase.storage.from("event-photos").getPublicUrl(`${id}/${f.name}`).data.publicUrl;
+                  return { thumb: url, original: url, name: f.name };
+                });
+              }
             }
           }
         }
       } catch {}
-      // 3. IndexedDB backup
+      // IndexedDB backup
       if (photos.length === 0) {
         try {
           const db = await openDB();
@@ -129,7 +137,7 @@ function GuestContent() {
     return () => { cancelled = true; };
   }, [id]);
 
-  // FACE MATCH - Thumb tho fast ga
+  // FACE MATCH - With thumb - Fast
   const findMyPhotos = async (selfieData: string) => {
     if (!modelsLoaded) { alert("Face detection is still loading. Please wait 5 seconds and try again."); return; }
     if (!allPhotos.length) { setMatchedPhotos([]); return; }
@@ -147,7 +155,7 @@ function GuestContent() {
       for (let i = 0; i < allPhotos.length; i++) {
         setSearchProgress(`Checking ${i + 1} / ${allPhotos.length} photos...`);
         try {
-          const img = await faceapi.fetchImage(allPhotos[i].thumb); // Thumb - fast
+          const img = await faceapi.fetchImage(allPhotos[i].thumb);
           const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
           for (const det of detections) {
             const distance = faceapi.euclideanDistance(selfieDesc, det.descriptor);
@@ -172,10 +180,10 @@ function GuestContent() {
   };
   const resetSelfie = () => { setSelfie(null); setMatchedPhotos([]); setSelfieName(""); setSelected(null); };
 
-  // FIX 2: DOWNLOAD - ORIGINAL NE - Quality taggadu
+  // DOWNLOAD - ORIGINAL ONLY - Quality will not reduce
   const download = (photo: PhotoItem, index: number) => {
     const a = document.createElement("a");
-    a.href = photo.original; // Original Quality
+    a.href = photo.original;
     a.download = `picqr-${id}-photo-${index + 1}.jpg`;
     a.target = "_blank"; a.click();
     if (!downloaded.includes(photo.original)) setDownloaded([...downloaded, photo.original]);
@@ -186,7 +194,6 @@ function GuestContent() {
     return <div style={{ padding: 40, textAlign: 'center', fontFamily: 'Arial' }}><h2>Invalid QR Code</h2><p>Please scan a valid PicQR code from your photographer.</p></div>;
   }
 
-  // FIX 3: EVENT CREATE CHEYAKAPOTHE / PHOTOS LEVU ANTE - EXACT MESSAGE
   const showNotAvailable = !loading && allPhotos.length === 0;
 
   return (
@@ -200,7 +207,6 @@ function GuestContent() {
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '16px' }}>
         <p style={{ fontSize: 12, color: modelsLoaded ? '#0A7A2F' : '#FF7A2F', textAlign: 'center', fontWeight: 700, margin: '8px 0 0' }}>{modelStatus}</p>
 
-        {/* PHOTOS LEVU - EVENT CREATE AVALEDU */}
         {showNotAvailable && (
           <div style={{ background: '#fff', border: '1px solid #EDEBFF', borderRadius: 16, padding: 32, marginTop: 16, textAlign: 'center' }}>
             <p style={{ fontSize: 48, margin: 0 }}>📷</p>
@@ -237,7 +243,7 @@ function GuestContent() {
               <img src={selfie} alt="Your selfie" style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', border: '3px solid #5B00B8' }} />
               <div style={{ flex: 1, minWidth: 180 }}>
                 <b style={{ fontSize: 15 }}>{selfieName ? `${selfieName} - Your Photos` : 'Your Photos'}</b>
-                <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>{searching ? `${searchProgress}` : `${matchedPhotos.length} of ${allPhotos.length} photos matched - Real Face Match ✅`}</p>
+                <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>{searching ? `${searchProgress}` : `${matchedPhotos.length} of ${allPhotos.length} photos matched - Real Face Match`}</p>
                 <p style={{ fontSize: 11, color: '#0A7A2F', margin: '4px 0 0', fontWeight: 700 }}>Download = Original Quality</p>
               </div>
               <button onClick={resetSelfie} style={{ background: '#FFF0F0', color: '#D40000', border: 'none', padding: '10px 16px', borderRadius: 20, fontWeight: 800, cursor: 'pointer' }}>Retake Selfie</button>

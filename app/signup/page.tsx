@@ -3,20 +3,21 @@ import { useState, Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 function SignupForm() {
   const router = useRouter();
   const params = useSearchParams();
-  // FIX: URL nundi name/email teesukomu - Only next matrame. ?name=&email= leak ledu
   const next = params.get("next") || "/dashboard";
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [country, setCountry] = useState("");
+  const [country, setCountry] = useState("India");
   const [autoCountry, setAutoCountry] = useState("");
   const [isVPN, setIsVPN] = useState(false);
   const [password, setPassword] = useState("");
@@ -27,68 +28,95 @@ function SignupForm() {
   const [success, setSuccess] = useState("");
   const [checking, setChecking] = useState(true);
 
-  // FIX 1: LOGIN AYINA USER - DIRECT DASHBOARD
+  // CHECK SESSION - WITH TIMEOUT - SHOW FORM IN 2.5 SEC
   useEffect(() => {
+    let done = false;
+    const finish = () => { if(!done){ done = true; setChecking(false); } };
+    const timer = setTimeout(finish, 2500);
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) { router.replace("/dashboard"); return; }
-      setChecking(false);
+      try {
+        if(!supabase){ finish(); return; }
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) { clearTimeout(timer); router.replace("/dashboard"); return; }
+      } catch {}
+      finish();
     };
     checkSession();
+    return () => { done = true; clearTimeout(timer); };
   }, [router]);
 
-  // AUTO LOCATION - /api/geo nundi
+  // AUTO LOCATION - FAIL = INDIA DEFAULT - FORM WILL NOT STOP
   useEffect(() => {
-    fetch("/api/geo").then(r => r.json()).then(d => {
-      const map: Record<string,string> = { IN: "India", PK: "Pakistan", BD: "Bangladesh", LK: "Sri Lanka", BT: "Bhutan", NP: "Nepal", AE: "UAE", QA: "Qatar", SA: "Saudi Arabia", SG: "Singapore", MY: "Malaysia", US: "USA", GB: "UK", CA: "Canada", AU: "Australia", DE: "Europe", FR: "Europe", IT: "Europe", ES: "Europe", NL: "Europe" };
-      const c = map[d.country] || "";
-      if (c) { setCountry(c); setAutoCountry(c); }
-      if (d.isVPN) setIsVPN(true);
-    }).catch(() => {});
+    const controller = new AbortController();
+    const timer = setTimeout(() => { try{ controller.abort(); }catch{} }, 3000);
+    fetch("/api/geo", { signal: controller.signal })
+      .then(r => {
+        if (!r.ok) throw new Error("geo failed");
+        return r.json();
+      })
+      .then(d => {
+        const map: Record<string,string> = { IN: "India", PK: "Pakistan", BD: "Bangladesh", LK: "Sri Lanka", BT: "Bhutan", NP: "Nepal", AE: "UAE", QA: "Qatar", SA: "Saudi Arabia", SG: "Singapore", MY: "Malaysia", US: "USA", GB: "UK", CA: "Canada", AU: "Australia", DE: "Europe", FR: "Europe", IT: "Europe", ES: "Europe", NL: "Europe" };
+        const c = map[d.country] || "India";
+        setCountry(c);
+        setAutoCountry(c);
+        if (d.isVPN) setIsVPN(true);
+      })
+      .catch(() => {
+        setCountry("India");
+        setAutoCountry("");
+      })
+      .finally(() => clearTimeout(timer));
+    return () => clearTimeout(timer);
   }, []);
 
   const input = { padding: "13px 14px", width: "100%", borderRadius: 12, border: "1.5px solid #E5E0F0", fontSize: 14, outline: "none", boxSizing: "border-box" as const, background: "#FAF9FF" };
   const label = { fontSize: 12, fontWeight: 700, color: "#1A1A1A", display: "block" as const, textAlign: "left" as const, marginBottom: 6 };
-  const isCountryLocked = !!autoCountry;
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(""); setSuccess("");
     const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
-    const finalCountry = autoCountry || country;
+    const finalCountry = country || "India";
     if (!cleanName || cleanName.length < 3) return setError("Please enter your full real name.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) return setError("Please enter a valid email address.");
     if (!finalCountry) return setError("Please select your country.");
     if (password.length < 8) return setError("Password must be at least 8 characters.");
+    if(!supabase) return setError("Server not connected. Please try after 1 min. Check Vercel Env keys.");
     setLoading(true);
     try {
-      await supabase.auth.signOut();
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: cleanEmail, password: password,
-        options: { data: { full_name: cleanName, country: finalCountry }, emailRedirectTo: `${window.location.origin}/dashboard` },
-      });
+      const signupPromise = (async () => {
+        await supabase.auth.signOut().catch(()=>{});
+        return await supabase.auth.signUp({
+          email: cleanEmail, password: password,
+          options: { data: { full_name: cleanName, country: finalCountry }, emailRedirectTo: `${window.location.origin}/dashboard` },
+        });
+      })();
+      const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("Network slow. Please try again.")), 15000));
+      const { data, error: signUpError } = await Promise.race([signupPromise, timeoutPromise]) as any;
       if (signUpError) {
         if (signUpError.message.toLowerCase().includes("already")) return setError("This email is already registered. Please Login.");
         return setError(signUpError.message);
       }
       if (data.user) {
-        // FIX: QR + Plan + Studio - Profile complete ga
         const qrId = `PQ-${data.user.id.slice(0, 6).toUpperCase()}`;
-        await supabase.from("profiles").upsert({
-          id: data.user.id,
-          email: cleanEmail,
-          full_name: cleanName,
-          studio_name: `${cleanName} Photography`,
-          country: finalCountry,
-          qr_id: qrId,
-          plan: "FREE",
-          plan_name: "Free Plan",
-        }, { onConflict: "id" });
-        // LocalStorage sync - Dashboard ki kavali
-        localStorage.setItem("picqr_user_name", cleanName);
-        localStorage.setItem("picqr_qr_id", qrId);
-        localStorage.setItem("picqr_country", finalCountry);
+        try {
+          await supabase.from("profiles").upsert({
+            id: data.user.id,
+            email: cleanEmail,
+            full_name: cleanName,
+            studio_name: `${cleanName} Photography`,
+            country: finalCountry,
+            qr_id: qrId,
+            plan: "FREE",
+            plan_name: "Free Plan",
+          }, { onConflict: "id" });
+        } catch {}
+        try {
+          localStorage.setItem("picqr_user_name", cleanName);
+          localStorage.setItem("picqr_qr_id", qrId);
+          localStorage.setItem("picqr_country", finalCountry);
+        } catch {}
       }
       if (data.user && !data.session) { setSuccess("Account created! Please check your email to verify, then Login."); setLoading(false); return; }
       router.push(next);
@@ -97,11 +125,11 @@ function SignupForm() {
   };
 
   const handleGoogle = async () => {
-    const finalCountry = autoCountry || country;
+    const finalCountry = country || "India";
     if (!finalCountry) { setError("Please select your country first, then continue with Google."); return; }
+    if(!supabase){ setError("Server not connected. Try after 1 min."); return; }
     setGoogleLoading(true); setError("");
-    // FIX: Google callback lo Dashboard ee country ni chaduvutundi
-    localStorage.setItem("picqr_signup_country", finalCountry);
+    try{ localStorage.setItem("picqr_signup_country", finalCountry); }catch{}
     const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/dashboard`, queryParams: { access_type: "offline", prompt: "consent" } } });
     if (error) { setError(error.message); setGoogleLoading(false); }
   };
@@ -123,12 +151,12 @@ function SignupForm() {
           <div style={{ marginBottom: 12 }}><label style={label}>Full Name</label><input placeholder="Enter your full name" value={name} onChange={(e) => setName(e.target.value)} style={input} /></div>
           <div style={{ marginBottom: 12 }}><label style={label}>Email ID</label><input placeholder="you@example.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={input} /></div>
           <div style={{ marginBottom: 12 }}>
-            <label style={label}>Country {isCountryLocked ? "(Auto Detected - Locked)" : ""}</label>
-            <select value={country} onChange={(e) => { if (!isCountryLocked) setCountry(e.target.value); }} disabled={isCountryLocked} style={{ ...input, cursor: isCountryLocked ? "not-allowed" : "pointer", background: isCountryLocked ? "#F0F0F0" : "#FAF9FF", opacity: isCountryLocked ? 0.8 : 1 }}>
+            <label style={label}>Country</label>
+            <select value={country} onChange={(e) => setCountry(e.target.value)} style={{ ...input, cursor: "pointer", background: "#FAF9FF" }}>
               <option value="" disabled>Select your country</option>
               <option>India</option><option>Pakistan</option><option>Bangladesh</option><option>Sri Lanka</option><option>Bhutan</option><option>Nepal</option><option>UAE</option><option>Qatar</option><option>Saudi Arabia</option><option>Singapore</option><option>Malaysia</option><option>USA</option><option>UK</option><option>Canada</option><option>Australia</option><option>Europe</option><option>Other</option>
             </select>
-            <p style={{ fontSize: 11, color: "#888", textAlign: "left", margin: "6px 0 0" }}>{autoCountry ? `📍 Detected: ${autoCountry} - Locked to your location. ${isVPN ? "• VPN Detected - Pricing locked to detected country" : ""}` : "Pricing will be shown after you login."}</p>
+            <p style={{ fontSize: 11, color: "#888", textAlign: "left", margin: "6px 0 0" }}>{autoCountry ? `Detected: ${autoCountry}. ${isVPN ? "• VPN Detected" : ""} You can change if needed.` : "Pricing will be shown after you login."}</p>
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={label}>Create Password</label>

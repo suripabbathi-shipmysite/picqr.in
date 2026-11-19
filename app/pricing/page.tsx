@@ -3,7 +3,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+// SAFE CLIENT - If env missing, app will not hang
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
 
 type Plan = { id: string; name: string; basePrice: number; fee: number; totalPrice: number; events: number; expiry: string; storage: string; desc: string; };
 
@@ -31,30 +36,40 @@ export default function Pricing() {
   const [paying, setPaying] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { router.replace("/login?next=/pricing"); return; }
-      setUserEmail(session.user.email || "");
-      setUserName(session.user.user_metadata?.full_name || "");
-      // FIX: GEO LOCK - Country ni client nundi PAMPAMU. Token matrame pampu.
-      // Server token nundi userId teesi, profiles.country nundi tier decide chestundi.
-      // LocalStorage / VPN / DevTools lo country marchina kuda price maradu.
-      const res = await fetch("/api/pricing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
-        body: JSON.stringify({}), // Country LEDU - Server DB ne source of truth
-      });
-      const d = await res.json();
-      if (!res.ok || !d.tier) { setBlocked(true); setLoading(false); return; }
-      setCountry(d.lockedCountry);
-      setSymbol(d.tier.symbol); setTierLabel(d.tier.label); setTierId(d.tier.id); setIsIndia(d.tier.isIndia);
-      setPlans(d.plans);
-      // LocalStorage lo kuda locked country ne save - Payment ki kuda ade vadutam
-      localStorage.setItem("picqr_country", d.lockedCountry);
-      localStorage.setItem("picqr_user_country", d.lockedCountry);
-      setLoading(false);
+      try {
+        if(!supabase){ router.replace("/login?next=/pricing"); return; }
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
+        const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]) as any;
+        if (!session) { router.replace("/login?next=/pricing"); return; }
+        if(cancelled) return;
+        setUserEmail(session.user.email || "");
+        setUserName(session.user.user_metadata?.full_name || "");
+        // GEO LOCK - Country is NOT sent from client. Server decides from token + profiles.country.
+        const res = await fetch("/api/pricing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
+          body: JSON.stringify({}),
+        });
+        const d = await res.json().catch(()=>({}));
+        if (!res.ok || !d.tier) { if(!cancelled){ setBlocked(true); setLoading(false); } return; }
+        if(cancelled) return;
+        setCountry(d.lockedCountry);
+        setSymbol(d.tier.symbol); setTierLabel(d.tier.label); setTierId(d.tier.id); setIsIndia(d.tier.isIndia);
+        setPlans(d.plans);
+        try {
+          localStorage.setItem("picqr_country", d.lockedCountry);
+          localStorage.setItem("picqr_user_country", d.lockedCountry);
+        } catch {}
+        setLoading(false);
+      } catch {
+        if(!cancelled){ router.replace("/login?next=/pricing"); }
+      }
     };
     load();
+    return () => { cancelled = true; };
   }, [router]);
 
   const loadRazorpay = () => new Promise<boolean>((resolve) => {
@@ -65,25 +80,25 @@ export default function Pricing() {
   const onChoose = async (planId: string) => {
     if (planId === "free") { router.push("/dashboard"); return; }
     const plan = plans.find((p) => p.id === planId); if (!plan) return;
-    // FIX: Payment ki kuda client country pampam - Server profiles nundi malli check chestundi
-    localStorage.setItem("picqr_selected_plan", planId); localStorage.setItem("picqr_selected_tier", tierId);
+    try{ localStorage.setItem("picqr_selected_plan", planId); localStorage.setItem("picqr_selected_tier", tierId); }catch{}
     if (USE_PAYMENT_LINKS) { const link = PAYMENT_LINKS[`${tierId}-${planId}`]; if (link && !link.includes("YOUR-")) { window.location.href = link; return; } alert("Payment link not configured yet. Please contact support."); return; }
     setPaying(planId);
     try {
+      if(!supabase){ router.replace("/login?next=/pricing"); return; }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { router.replace("/login?next=/pricing"); return; }
       const res = await fetch("/api/payment/order", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
         credentials: "include",
-        body: JSON.stringify({ planId, tierId }) // Country LEDU - Server ne decide chestundi
+        body: JSON.stringify({ planId, tierId })
       });
-      const data = await res.json(); if (!res.ok || !data.orderId) throw new Error(data.error || "Order failed");
+      const data = await res.json().catch(()=>({})); if (!res.ok || !data.orderId) throw new Error(data.error || "Order failed");
       const ok = await loadRazorpay(); if (!ok) throw new Error("Razorpay failed to load");
       const options: any = { key: data.keyId, amount: data.amount, currency: data.currency, name: "PicQR.in", description: `${plan.name} - ${tierLabel}`, order_id: data.orderId, prefill: { name: userName, email: userEmail }, theme: { color: "#5B00B8" },
         handler: async (response: any) => {
           const v = await fetch("/api/payment/verify", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` }, credentials: "include", body: JSON.stringify({ razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature, planId, tierId }) });
-          if (v.ok) { localStorage.setItem("picqr_plan_active", planId); router.push("/dashboard?payment=success&plan=" + planId); } else { alert("Payment verification failed. Contact support with payment id: " + response.razorpay_payment_id); }
+          if (v.ok) { try{ localStorage.setItem("picqr_plan_active", planId); }catch{} router.push("/dashboard?payment=success&plan=" + planId); } else { alert("Payment verification failed. Contact support with payment id: " + response.razorpay_payment_id); }
         },
         modal: { ondismiss: () => setPaying("") } };
       const rzp = new (window as any).Razorpay(options); rzp.open();

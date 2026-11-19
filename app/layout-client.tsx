@@ -9,10 +9,12 @@ export default function LayoutClient({ children }: { children: React.ReactNode }
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    setIsLoggedIn(
-      document.cookie.includes("picqr_session") ||
-      localStorage.getItem("picqr_logged_in") === "1"
-    );
+    try {
+      setIsLoggedIn(
+        document.cookie.includes("picqr_session") ||
+        localStorage.getItem("picqr_logged_in") === "1"
+      );
+    } catch { setIsLoggedIn(false); }
   }, [path]);
 
   const hide = path?.startsWith("/dashboard") || path?.startsWith("/login") || path?.startsWith("/signup") || path?.startsWith("/pricing");
@@ -33,8 +35,10 @@ export default function LayoutClient({ children }: { children: React.ReactNode }
   const pricingHref = isLoggedIn ? "/pricing" : "/login?next=/pricing";
 
   const logout = () => {
-    document.cookie = "picqr_session=; path=/; max-age=0";
-    localStorage.removeItem("picqr_logged_in");
+    try {
+      document.cookie = "picqr_session=; path=/; max-age=0";
+      localStorage.removeItem("picqr_logged_in");
+    } catch {}
     window.location.href = "/";
   };
 

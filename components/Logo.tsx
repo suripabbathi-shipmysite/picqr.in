@@ -16,7 +16,7 @@ export default function Logo({ dark = false }: { dark?: boolean }){
           width:'auto',
           maxWidth: dark ? 150 : 180,
           objectFit:'contain',
-          // White background image kabatti, dark sidebar lo white pill la chupistham - border la kanipinchadu
+          // White background image, so on dark sidebar show as white pill
           background: dark ? '#fff' : 'transparent',
           borderRadius: dark ? 10 : 0,
           padding: dark ? '6px 10px' : 0,
