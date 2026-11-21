@@ -1,9 +1,7 @@
 "use client";
 import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+import { supabase } from "@/lib/supabase/client";
 
 function AuthCallbackInner() {
   const router = useRouter();
@@ -13,7 +11,6 @@ function AuthCallbackInner() {
       const next = search.get("next") || localStorage.getItem("picqr_login_next") || "/dashboard";
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        // Profile lekapothe create chey - Google user
         const { data: profile } = await supabase.from("profiles").select("id").eq("id", session.user.id).maybeSingle();
         if (!profile) {
           await supabase.from("profiles").insert({
@@ -21,13 +18,13 @@ function AuthCallbackInner() {
             email: session.user.email,
             full_name: session.user.user_metadata?.full_name || "",
             qr_id: `PQ-${session.user.id.slice(0, 6).toUpperCase()}`,
-            country: "",
+            country: "India",
           });
         }
         localStorage.removeItem("picqr_login_next");
         router.replace(next);
       } else {
-        router.replace("/login");
+        router.replace("/auth/login");
       }
     };
     run();

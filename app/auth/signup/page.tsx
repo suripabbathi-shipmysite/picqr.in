@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { supbase } from '@/lib/supbase/client'
+import { supabase } from '@/lib/supabase/client'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -18,7 +18,7 @@ export default function SignupPage() {
     setError('')
 
     try {
-      const { data, error } = await supbase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password: password,
         options: {
@@ -48,7 +48,7 @@ export default function SignupPage() {
   }
 
   const handleGoogle = async () => {
-    await supbase.auth.signInWithOAuth({
+    await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
