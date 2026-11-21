@@ -1,13 +1,13 @@
-import { createClient } from '@supbase/supbase-js'
+import { createClient } from '@supabase/supabase-js'
 
-const supbaseUrl = process.env.NEXT_PUBLIC_SUPBASE_URL!
-const supbaseAnonKey = process.env.NEXT_PUBLIC_SUPBASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-if (!supbaseUrl || !supbaseAnonKey) {
-  console.error('Missing Supbase env vars')
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('Missing Supabase env vars')
 }
 
-export const supbase = createClient(supbaseUrl, supbaseAnonKey, {
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
